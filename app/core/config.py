@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Database
     DB_HOST: str
-    DB_PORT: int = 5432
+    DB_PORT: int = 30432
     DB_NAME: str
     DB_USER: str
     DB_PASS: str
@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
     
     # Azure OAuth2
     AZURE_CLIENT_ID: Optional[str] = None

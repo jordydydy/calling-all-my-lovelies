@@ -9,51 +9,86 @@ import logging
 logger = logging.getLogger("api.routes")
 router = APIRouter()
 
-# --- Verifikasi Webhook ---
+# --- Verifikasi Webhook (Meta Requirement) ---
+
 @router.get("/whatsapp/webhook")
-def verify_whatsapp(mode: str = Query(..., alias="hub.mode"), token: str = Query(..., alias="hub.verify_token"), challenge: str = Query(..., alias="hub.challenge")):
+def verify_whatsapp(
+    mode: str = Query(..., alias="hub.mode"),
+    token: str = Query(..., alias="hub.verify_token"),
+    challenge: str = Query(..., alias="hub.challenge"),
+):
     if mode == "subscribe" and token == settings.WHATSAPP_VERIFY_TOKEN:
         return Response(content=challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @router.get("/instagram/webhook")
-def verify_instagram(mode: str = Query(..., alias="hub.mode"), token: str = Query(..., alias="hub.verify_token"), challenge: str = Query(..., alias="hub.challenge")):
+def verify_instagram(
+    mode: str = Query(..., alias="hub.mode"),
+    token: str = Query(..., alias="hub.verify_token"),
+    challenge: str = Query(..., alias="hub.challenge"),
+):
     if mode == "subscribe" and token == settings.INSTAGRAM_VERIFY_TOKEN:
         return Response(content=challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Verification failed")
 
-# --- Ingestion ---
+# --- Ingestion Webhooks ---
+
 @router.post("/whatsapp/webhook")
-async def whatsapp_webhook(request: Request, bg_tasks: BackgroundTasks, orchestrator: MessageOrchestrator = Depends(get_orchestrator)):
+async def whatsapp_webhook(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    orchestrator: MessageOrchestrator = Depends(get_orchestrator)
+):
     data = await request.json()
     msg = parse_whatsapp_payload(data)
     
     if msg:
-        # Cek apakah ini feedback event?
+        # Cek apakah ini feedback event (tombol Good/Bad diklik)
         if msg.metadata and msg.metadata.get("is_feedback"):
-            # Logic handle feedback (bisa tambah method di orchestrator)
-            logger.info(f"Feedback received: {msg.metadata['payload']}")
-            # orchestrator.handle_feedback(msg) # Implement if needed
+            logger.info(f"Feedback Event Received (WA): {msg.metadata['payload']}")
+            bg_tasks.add_task(orchestrator.handle_feedback, msg)
         else:
+            # Pesan biasa
             bg_tasks.add_task(orchestrator.process_message, msg)
             
     return {"status": "ok"}
 
 @router.post("/instagram/webhook")
-async def instagram_webhook(request: Request, bg_tasks: BackgroundTasks, orchestrator: MessageOrchestrator = Depends(get_orchestrator)):
+async def instagram_webhook(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    orchestrator: MessageOrchestrator = Depends(get_orchestrator)
+):
     data = await request.json()
     msg = parse_instagram_payload(data)
     
     if msg:
         if msg.metadata and msg.metadata.get("is_feedback"):
-            logger.info(f"Feedback received: {msg.metadata['payload']}")
+            logger.info(f"Feedback Event Received (IG): {msg.metadata['payload']}")
+            bg_tasks.add_task(orchestrator.handle_feedback, msg)
         else:
             bg_tasks.add_task(orchestrator.process_message, msg)
             
     return {"status": "ok"}
 
-# --- Internal Process Endpoint (Dipanggil oleh Email Listener) ---
+# --- DUMMY ENDPOINT (SOLUSI 404) ---
+
+@router.post("/api/send/reply")
+async def ignore_backend_callback(request: Request):
+    """
+    Endpoint ini menerima request dari Backend AI tapi TIDAK memprosesnya.
+    Tujuannya hanya agar Backend mendapat status 200 OK dan log tidak merah (404).
+    Kita mengandalkan Direct Response dari 'chatbot.py' untuk membalas user.
+    """
+    return {"status": "ignored"}
+
+# --- Internal Process Endpoint (Untuk Email Listener) ---
+
 @router.post("/api/messages/process")
-async def process_message_internal(msg: IncomingMessage, bg_tasks: BackgroundTasks, orchestrator: MessageOrchestrator = Depends(get_orchestrator)):
+async def process_message_internal(
+    msg: IncomingMessage,
+    bg_tasks: BackgroundTasks,
+    orchestrator: MessageOrchestrator = Depends(get_orchestrator)
+):
     bg_tasks.add_task(orchestrator.process_message, msg)
     return {"status": "queued"}
