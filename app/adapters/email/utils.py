@@ -19,10 +19,11 @@ def strip_quoted_sections(text: str) -> str:
     if not text: return ""
     
     patterns = [
-        r'\n\s*On\s+.*wrote:\s*\n[\s\S]*',
-        r'\n\s*Pada\s+.*menulis:\s*\n[\s\S]*',
-        r'\n\s*From:\s*.*\n\s*Sent:\s*.*\n\s*To:\s*.*[\s\S]*',
-        r'\n\s*Dari:\s*.*\n\s*Kirim:\s*.*\n\s*Kepada:\s*.*[\s\S]*',
+        r'(?:\r\n|\n|^)?\s*On\s+.*(?:at|pukul)\s+.*(?:wrote|menulis):?\s*[\s\S]*',
+        r'(?:\r\n|\n|^)?\s*On\s+.*(?:wrote|menulis):?\s*[\s\S]*',
+        r'(?:\r\n|\n|^)?\s*Pada\s+.*menulis:\s*[\s\S]*',
+        r'(?:\r\n|\n|^)?\s*From:\s*.*\n?Sent:\s*.*\n?To:\s*.*[\s\S]*',
+        r'(?:\r\n|\n|^)?\s*Dari:\s*.*\n?Kirim:\s*.*\n?Kepada:\s*.*[\s\S]*',
         r'\n\s*_{3,}[\s\S]*',         
         r'\n\s*-{3,}\s*Original Message\s*-{3,}[\s\S]*', 
         r'\n\s*>[\s\S]*',

@@ -8,27 +8,47 @@ from app.core.logging import setup_logging
 from app.repositories.base import Database
 from app.api.routes import router as api_router
 from app.adapters.email.listener import start_email_listener
-from app.services.scheduler import run_scheduler # [BARU] Import
+from app.services.scheduler import run_scheduler
+import logging
 
 setup_logging()
+logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Database.initialize()
     
-    if settings.EMAIL_PROVIDER != "unknown":
-        email_thread = threading.Thread(target=start_email_listener, daemon=True)
-        email_thread.start()
+    scheduler_task = None
+    
+    if settings.ENABLE_BACKGROUND_WORKER:
+        is_listener_running = False
+        for t in threading.enumerate():
+            if t.name == "EmailListenerThread":
+                is_listener_running = True
+                break
+        
+        if not is_listener_running and settings.EMAIL_PROVIDER != "unknown":
+            email_thread = threading.Thread(
+                target=start_email_listener, 
+                name="EmailListenerThread", 
+                daemon=True
+            )
+            email_thread.start()
+            logger.info("📧 Email Listener Thread Started")
+        else:
+            if is_listener_running:
+                logger.warning("⚠️ Email Listener already running, skipping start.")
 
-    scheduler_task = asyncio.create_task(run_scheduler())
+        scheduler_task = asyncio.create_task(run_scheduler())
     
     yield
     
-    scheduler_task.cancel()
-    try:
-        await scheduler_task
-    except asyncio.CancelledError:
-        pass
+    if scheduler_task:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
         
     Database.close()
 

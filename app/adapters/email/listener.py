@@ -68,11 +68,11 @@ def process_single_email(sender_email, sender_name, subject, body, msg_id, refer
         "platform": "email",
         "metadata": {
             "subject": subject,
-            "in_reply_to": msg_id,
+            "in_reply_to": msg_id, 
             "references": references,
             "sender_name": sender_name,
             "thread_key": thread_key,
-            "graph_message_id": graph_message_id
+            "graph_message_id": graph_message_id 
         }
     }
     
@@ -107,7 +107,7 @@ def _poll_graph_api():
             logger.info(f"Found {len(messages)} new emails via Graph API.")
 
         for msg in messages:
-            graph_id = msg.get("id")
+            graph_id = msg.get("id") # ID Unik Azure untuk Reply
             msg_id = msg.get("internetMessageId", "").strip()
             
             if not msg_id:
@@ -149,7 +149,6 @@ def _poll_graph_api():
                 elif h_name == "in-reply-to":
                     in_reply_to = h.get("value", "")
 
-            # Thread Key Logic
             azure_conv_id = msg.get("conversationId")
             
             if azure_conv_id:

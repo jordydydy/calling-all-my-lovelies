@@ -52,9 +52,10 @@ class MessageOrchestrator:
             send_kwargs = {"subject": "Session Ended"}
             meta = self.repo_msg.get_email_metadata(conversation_id)
             if meta:
-                send_kwargs.update(meta)
-                if 'graph_message_id' in send_kwargs:
-                    del send_kwargs['graph_message_id']
+                if settings.EMAIL_PROVIDER == "azure_oauth2":
+                    send_kwargs["graph_message_id"] = meta.get("in_reply_to")
+                else:
+                    send_kwargs.update(meta)
 
         await adapter.send_message(user_id, closing_text, **send_kwargs)
 
@@ -88,14 +89,22 @@ class MessageOrchestrator:
         answer = payload.get("answer") or payload.get("message")
         conversation_id = payload.get("conversation_id")
         answer_id = payload.get("answer_id")
+        
         if not user_id or not answer or not platform: return
         adapter = self.adapters.get(platform)
         if not adapter: return
+        
         send_kwargs = {}
         if platform == "email":
             meta = self.repo_msg.get_email_metadata(conversation_id) if conversation_id else None
-            if meta: send_kwargs = meta
-            else: send_kwargs = {"subject": "Re: Your Inquiry"}
+            if meta: 
+                if settings.EMAIL_PROVIDER == "azure_oauth2":
+                    send_kwargs = {"subject": meta.get("subject")}
+                    send_kwargs["graph_message_id"] = meta.get("in_reply_to")
+                else:
+                    send_kwargs = meta
+            else: 
+                send_kwargs = {"subject": "Re: Your Inquiry"}
         
         await adapter.send_message(user_id, answer, **send_kwargs)
         if answer_id: 
@@ -129,7 +138,7 @@ class MessageOrchestrator:
             logger.error(f"Critical error during chatbot processing: {e}")
             response = None
 
-        try: 
+        try:
             await adapter.send_typing_off(msg.platform_unique_id)
         except Exception: pass
 
@@ -157,12 +166,16 @@ class MessageOrchestrator:
             await adapter.send_feedback_request(msg.platform_unique_id, answer_id)
             
         if msg.platform == "email" and response.conversation_id and msg.metadata:
-            current_thread_session = self.repo_msg.get_conversation_by_thread(msg.metadata.get("thread_key"))
-            if not current_thread_session or current_thread_session == response.conversation_id:
-                self.repo_msg.save_email_metadata(
-                    response.conversation_id,
-                    msg.metadata.get("subject", ""),
-                    msg.metadata.get("in_reply_to", ""),
-                    msg.metadata.get("references", ""),
-                    msg.metadata.get("thread_key", "")
-                )
+            db_in_reply_to = (
+                msg.metadata.get("graph_message_id") 
+                if settings.EMAIL_PROVIDER == "azure_oauth2" 
+                else msg.metadata.get("in_reply_to", "")
+            )
+            
+            self.repo_msg.save_email_metadata(
+                response.conversation_id,
+                msg.metadata.get("subject", ""),
+                db_in_reply_to, 
+                msg.metadata.get("references", ""),
+                msg.metadata.get("thread_key", "")
+            )

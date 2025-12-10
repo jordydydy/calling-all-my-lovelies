@@ -9,7 +9,6 @@ class MessageRepository:
         try:
             with Database.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    
                     cursor.execute(
                         """
                         INSERT INTO bkpm.processed_messages (message_id, platform)
@@ -18,12 +17,11 @@ class MessageRepository:
                         """,
                         (message_id, platform)
                     )
-                    
                     is_new_entry = cursor.rowcount > 0
                     conn.commit()
                     
                     return not is_new_entry 
-
+                
         except Exception as e:
             logger.error(f"DB Lock Error for {message_id}: {e}")
             return True 
@@ -74,7 +72,12 @@ class MessageRepository:
                     )
                     row = cursor.fetchone()
                     if row:
-                        return {"subject": row[0], "in_reply_to": row[1], "references": row[2], "thread_key": row[3]}
+                        return {
+                            "subject": row[0], 
+                            "in_reply_to": row[1], 
+                            "references": row[2], 
+                            "thread_key": row[3]
+                        }
             return None
         except Exception as e:
             logger.error(f"Failed to get email metadata: {e}")
