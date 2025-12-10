@@ -10,7 +10,7 @@ async def run_scheduler():
     Background task untuk menutup sesi idle.
     [MODE TESTING CEPAT]
     """
-    logger.info("⏳ Session Timeout Scheduler Started (FAST MODE: 2 Mins Idle Check)...")
+    logger.info("⏳ Session Timeout Scheduler Started (FAST MODE: 10 Mins Idle Check)...")
     
     repo_conv = ConversationRepository()
     
@@ -21,7 +21,6 @@ async def run_scheduler():
         try:
             orchestrator = get_orchestrator()
             
-            # [TESTING] Cek sesi yang diam lebih dari 2 MENIT (bukan 15)
             stale_sessions = repo_conv.get_stale_sessions(minutes=10)
             
             if stale_sessions:

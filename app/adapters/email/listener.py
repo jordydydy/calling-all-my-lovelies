@@ -5,7 +5,7 @@ import requests
 import logging
 import msal
 from email.header import decode_header
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional
 
 from app.core.config import settings
 from app.adapters.email.utils import sanitize_email_body
@@ -15,8 +15,7 @@ logger = logging.getLogger("email.listener")
 repo = MessageRepository()
 
 _token_cache: Dict[str, Any] = {}
-# Cache memori untuk mencegah race condition (double processing)
-_processing_cache: Set[str] = set()
+# [HAPUS] _processing_cache dihilangkan agar stateless dan aman untuk multi-worker
 
 def get_graph_token() -> Optional[str]:
     global _token_cache
@@ -80,7 +79,7 @@ def process_single_email(sender_email, sender_name, subject, body, msg_id, refer
     try:
         api_url = f"http://127.0.0.1:9798/api/messages/process" 
         requests.post(api_url, json=payload, timeout=10)
-        logger.info(f"Email processed: {sender_email} | Thread Key: {thread_key}")
+        logger.info(f"Email processed: {sender_email} | Thread: {thread_key}")
     except Exception as req_err:
         logger.error(f"Failed to push email to API: {req_err}")
 
@@ -111,19 +110,16 @@ def _poll_graph_api():
             graph_id = msg.get("id")
             msg_id = msg.get("internetMessageId", "").strip()
             
-            # Skip jika ID kosong
             if not msg_id:
                 _mark_graph_read(user_id, graph_id, token)
                 continue
 
-            # Deduplikasi Memory & DB
-            if msg_id in _processing_cache: continue
+            # [FIX] Deduplikasi Langsung ke Database
+            # Kita tidak pakai cache memory. Kita tanya langsung ke DB.
+            # DB akan menjamin hanya 1 proses yang bisa lolos.
             if repo.is_processed(msg_id, "email"):
                 _mark_graph_read(user_id, graph_id, token)
                 continue
-            
-            _processing_cache.add(msg_id)
-            if len(_processing_cache) > 1000: _processing_cache.clear()
 
             subject = msg.get("subject", "")
             sender_info = msg.get("from", {}).get("emailAddress", {})
@@ -152,8 +148,7 @@ def _poll_graph_api():
                 elif h_name == "in-reply-to":
                     in_reply_to = h.get("value", "")
 
-            # [FIX CRITICAL] Thread Key Logic
-            # Gunakan conversationId dari Azure karena ini paling STABIL
+            # Thread Key Logic
             azure_conv_id = msg.get("conversationId")
             
             if azure_conv_id:
@@ -172,7 +167,7 @@ def _poll_graph_api():
                 clean_body, 
                 msg_id, 
                 references, 
-                thread_key, # Ini yang akan menjaga konsistensi sesi
+                thread_key, 
                 graph_id
             )
             
@@ -211,11 +206,8 @@ def _poll_imap():
             
             msg_id = msg.get("Message-ID", "").strip()
             
-            if not msg_id or msg_id in _processing_cache or repo.is_processed(msg_id, "email"):
+            if not msg_id or repo.is_processed(msg_id, "email"):
                 continue
-            
-            _processing_cache.add(msg_id)
-            if len(_processing_cache) > 1000: _processing_cache.clear()
             
             subject = decode_str(msg.get("Subject"))
             sender = decode_str(msg.get("From"))
@@ -245,7 +237,6 @@ def _poll_imap():
             else:
                 thread_key = msg_id
 
-            # IMAP tidak punya graph_message_id
             process_single_email(sender_email, sender_name, subject, clean_body, msg_id, references, thread_key, None)
 
         mail.close()

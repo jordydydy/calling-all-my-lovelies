@@ -6,9 +6,16 @@ logger = logging.getLogger("repo.message")
 
 class MessageRepository:
     def is_processed(self, message_id: str, platform: str) -> bool:
+        """
+        Mengecek apakah pesan sudah diproses menggunakan Database Locking.
+        Return:
+            True  -> Pesan SUDAH ada (Duplikat / Sedang diproses) -> SKIP
+            False -> Pesan BARU (Berhasil dikunci oleh worker ini) -> PROSES
+        """
         try:
             with Database.get_connection() as conn:
                 with conn.cursor() as cursor:
+                    # 1. Pastikan tabel ada
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS bkpm.processed_messages (
                             message_id TEXT NOT NULL,
@@ -17,6 +24,10 @@ class MessageRepository:
                             PRIMARY KEY (message_id, platform)
                         );
                     """)
+                    
+                    # 2. ATOMIC LOCK: Coba Insert
+                    # Jika ID sudah ada, database akan melempar sinyal konflik (rowcount 0).
+                    # Tidak ada dua worker yang bisa sukses insert ID yang sama bersamaan.
                     cursor.execute(
                         """
                         INSERT INTO bkpm.processed_messages (message_id, platform)
@@ -25,11 +36,19 @@ class MessageRepository:
                         """,
                         (message_id, platform)
                     )
-                    is_new = cursor.rowcount > 0
+                    
+                    # Jika rowcount > 0: Berhasil Insert -> Ini pesan baru -> Return False (Belum diproses)
+                    # Jika rowcount = 0: Gagal Insert -> Sudah ada -> Return True (Sudah diproses)
+                    is_new_entry = cursor.rowcount > 0
                     conn.commit()
-                    return not is_new 
+                    
+                    return not is_new_entry 
+
         except Exception as e:
-            logger.error(f"Deduplication check failed for {message_id}: {e}")
+            # [FAIL-SAFE]
+            # Jika DB error (koneksi putus dll), kita asumsikan True (Sudah diproses)
+            # agar tidak terjadi spamming / double reply sampai DB pulih.
+            logger.error(f"DB Lock Error for {message_id}: {e}")
             return True 
 
     def get_conversation_by_thread(self, thread_key: str) -> Optional[str]:
@@ -37,7 +56,10 @@ class MessageRepository:
         try:
             with Database.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("SELECT conversation_id FROM bkpm.email_metadata WHERE thread_key = %s LIMIT 1", (thread_key,))
+                    cursor.execute(
+                        "SELECT conversation_id FROM bkpm.email_metadata WHERE thread_key = %s LIMIT 1", 
+                        (thread_key,)
+                    )
                     row = cursor.fetchone()
                     return str(row[0]) if row else None
         except Exception as e:
@@ -69,7 +91,10 @@ class MessageRepository:
         try:
             with Database.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute("SELECT subject, in_reply_to, \"references\", thread_key FROM bkpm.email_metadata WHERE conversation_id = %s LIMIT 1", (conversation_id,))
+                    cursor.execute(
+                        "SELECT subject, in_reply_to, \"references\", thread_key FROM bkpm.email_metadata WHERE conversation_id = %s LIMIT 1", 
+                        (conversation_id,)
+                    )
                     row = cursor.fetchone()
                     if row:
                         return {"subject": row[0], "in_reply_to": row[1], "references": row[2], "thread_key": row[3]}
