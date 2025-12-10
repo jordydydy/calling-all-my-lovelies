@@ -1,5 +1,6 @@
 import asyncio
 import httpx
+import uuid
 from typing import Dict
 from app.schemas.models import IncomingMessage
 from app.repositories.conversation import ConversationRepository
@@ -27,16 +28,10 @@ class MessageOrchestrator:
     async def timeout_session(self, conversation_id: str, platform: str, user_id: str):
         adapter = self.adapters.get(platform)
         if not adapter: return
-
         logger.info(f"TIMEOUT: Auto-closing session {conversation_id} for {platform} user {user_id}")
-
+        
         try:
-            await self.chatbot.ask(
-                query="Terima Kasih", 
-                conversation_id=conversation_id, 
-                platform=platform, 
-                user_id=user_id
-            )
+            await self.chatbot.ask(query="Terima Kasih", conversation_id=conversation_id, platform=platform, user_id=user_id)
         except Exception as e:
             logger.error(f"Failed to send close signal to AI: {e}")
 
@@ -58,6 +53,7 @@ class MessageOrchestrator:
                     send_kwargs.update(meta)
 
         await adapter.send_message(user_id, closing_text, **send_kwargs)
+        self.repo_conv.close_session(conversation_id)
 
     async def handle_feedback(self, msg: IncomingMessage):
         payload_str = msg.metadata.get("payload", "")
@@ -84,17 +80,21 @@ class MessageOrchestrator:
 
     async def send_manual_message(self, data: dict):
         payload = data.get("data") if "data" in data else data
-        user_id = payload.get("user") or payload.get("platform_unique_id") or payload.get("recipient_id")
+        user_id = payload.get("user") or payload.get("platform_unique_id") or payload.get("recipient_id") or payload.get("user_id")
         platform = payload.get("platform")
         answer = payload.get("answer") or payload.get("message")
         conversation_id = payload.get("conversation_id")
         answer_id = payload.get("answer_id")
         
-        if not user_id or not answer or not platform: return
+        if not user_id or not answer or not platform: 
+            logger.warning(f"Invalid callback payload: {payload}")
+            return
+            
         adapter = self.adapters.get(platform)
         if not adapter: return
         
         send_kwargs = {}
+        
         if platform == "email":
             meta = self.repo_msg.get_email_metadata(conversation_id) if conversation_id else None
             if meta: 
@@ -107,8 +107,9 @@ class MessageOrchestrator:
                 send_kwargs = {"subject": "Re: Your Inquiry"}
         
         await adapter.send_message(user_id, answer, **send_kwargs)
-        if answer_id: 
-            await adapter.send_feedback_request(user_id, answer_id)
+        try: await adapter.send_typing_off(user_id)
+        except: pass
+        if answer_id: await adapter.send_feedback_request(user_id, answer_id)
 
     async def process_message(self, msg: IncomingMessage):
         adapter = self.adapters.get(msg.platform)
@@ -126,46 +127,21 @@ class MessageOrchestrator:
                 existing_id = self.repo_msg.get_conversation_by_thread(thread_key)
                 if existing_id:
                     msg.conversation_id = existing_id
-                else:
-                    logger.info(f"NEW THREAD DETECTED: '{thread_key}'. Starting new session.")
+                    logger.info(f"THREAD MATCH (DB): Found existing session {existing_id}")
             
             if not msg.conversation_id and msg.platform != "email":
                 msg.conversation_id = self.repo_conv.get_active_id(msg.platform_unique_id, msg.platform)
 
-        try:
-            response = await self.chatbot.ask(msg.query, msg.conversation_id, msg.platform, msg.platform_unique_id)
-        except Exception as e:
-            logger.error(f"Critical error during chatbot processing: {e}")
-            response = None
-
-        try:
-            await adapter.send_typing_off(msg.platform_unique_id)
-        except Exception: pass
-
-        if not response or not response.answer:
-            return 
-
-        send_kwargs = {}
-        if msg.platform == "email":
-            if msg.metadata:
-                send_kwargs = {
-                    "subject": msg.metadata.get("subject"),
-                    "in_reply_to": msg.metadata.get("in_reply_to"),
-                    "references": msg.metadata.get("references"),
-                    "graph_message_id": msg.metadata.get("graph_message_id")
-                }
+        if not msg.conversation_id:
+            if msg.platform == "email" and msg.metadata and msg.metadata.get("thread_key"):
+                thread_key = msg.metadata.get("thread_key")
+                msg.conversation_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, thread_key))
+                logger.info(f"GENERATED DETERMINISTIC ID (UUIDv5): {msg.conversation_id} from thread '{thread_key}'")
             else:
-                meta = self.repo_msg.get_email_metadata(response.conversation_id or msg.conversation_id)
-                if meta: send_kwargs = meta
+                msg.conversation_id = str(uuid.uuid4())
+                logger.info(f"GENERATED RANDOM ID (UUIDv4): {msg.conversation_id}")
 
-        await adapter.send_message(msg.platform_unique_id, response.answer, **send_kwargs)
-
-        raw_data = response.raw.get("data", {}) if response.raw else {}
-        answer_id = raw_data.get("answer_id")
-        if answer_id:
-            await adapter.send_feedback_request(msg.platform_unique_id, answer_id)
-            
-        if msg.platform == "email" and response.conversation_id and msg.metadata:
+        if msg.platform == "email" and msg.conversation_id and msg.metadata:
             db_in_reply_to = (
                 msg.metadata.get("graph_message_id") 
                 if settings.EMAIL_PROVIDER == "azure_oauth2" 
@@ -173,9 +149,16 @@ class MessageOrchestrator:
             )
             
             self.repo_msg.save_email_metadata(
-                response.conversation_id,
+                msg.conversation_id,
                 msg.metadata.get("subject", ""),
                 db_in_reply_to, 
                 msg.metadata.get("references", ""),
                 msg.metadata.get("thread_key", "")
             )
+
+        success = await self.chatbot.ask(msg.query, msg.conversation_id, msg.platform, msg.platform_unique_id)
+        
+        if not success:
+            logger.error("Gagal push ke backend AI.")
+            try: await adapter.send_typing_off(msg.platform_unique_id)
+            except: pass

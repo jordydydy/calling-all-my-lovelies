@@ -66,8 +66,17 @@ async def instagram_webhook(
     return {"status": "ok"}
 
 @router.post("/api/send/reply")
-async def ignore_backend_callback(request: Request):
-    return {"status": "ignored"}
+async def receive_backend_reply(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    orchestrator: MessageOrchestrator = Depends(get_orchestrator)
+):
+    data = await request.json()
+    logger.info(f"Received reply callback from Backend: {data}")
+    
+    bg_tasks.add_task(orchestrator.send_manual_message, data)
+    
+    return {"status": "processed"}
 
 @router.post("/api/messages/process")
 async def process_message_internal(

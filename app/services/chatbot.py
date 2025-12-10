@@ -1,5 +1,4 @@
 import httpx
-import time
 from datetime import datetime, timezone
 from app.core.config import settings
 from app.schemas.models import ChatbotResponse
@@ -8,9 +7,12 @@ import logging
 logger = logging.getLogger("service.chatbot")
 
 class ChatbotClient:
-    async def ask(self, query: str, conversation_id: str, platform: str, user_id: str) -> ChatbotResponse:
+    async def ask(self, query: str, conversation_id: str, platform: str, user_id: str) -> bool:
+        """
+        Mengirim payload ke Backend AI (Fire-and-Forget).
+        Return: True jika sukses push, False jika gagal.
+        """
         start_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        
         safe_conv_id = conversation_id or ""
 
         payload = {
@@ -27,25 +29,18 @@ class ChatbotClient:
 
         url = settings.CHATBOT_URL
         
-        logger.info(f"DEBUG: Mengirim ke {url} | Timestamp: {start_timestamp} | ConvID: {safe_conv_id}")
+        logger.info(f"PUSH TO BACKEND: {url} | ConvID: {safe_conv_id}")
         
         try:
             async with httpx.AsyncClient(timeout=settings.CHATBOT_TIMEOUT_SECONDS) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 
-            if resp.status_code != 200:
+            if resp.status_code == 200:
+                return True
+            else:
                 logger.warning(f"Chatbot API Error {resp.status_code}: {resp.text}")
-                return ChatbotResponse(success=False, answer="Mohon maaf, AI sedang sibuk.")
-
-            data = resp.json().get("data", {})
-            
-            return ChatbotResponse(
-                success=True,
-                answer=data.get("answer"),
-                conversation_id=data.get("conversation_id"),
-                raw=resp.json()
-            )
+                return False
 
         except Exception as e:
-            logger.error(f"Failed to call Chatbot API: {e}")
-            return ChatbotResponse(success=False, answer="Mohon maaf, AI sedang sibuk (Connection Error).")
+            logger.error(f"Failed to push to Chatbot API: {e}")
+            return False
