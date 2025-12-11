@@ -5,7 +5,7 @@ from app.adapters.utils import split_text_smartly, make_meta_request
 
 class InstagramAdapter(BaseAdapter):
     def __init__(self):
-        self.version = "v18.0"
+        self.version = "v24.0"
         self.base_url = f"https://graph.instagram.com/{self.version}/{settings.INSTAGRAM_CHATBOT_ID}/messages"
         self.token = settings.INSTAGRAM_PAGE_ACCESS_TOKEN
 

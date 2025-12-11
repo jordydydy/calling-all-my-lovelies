@@ -77,7 +77,7 @@ def process_single_email(sender_email, sender_name, subject, body, msg_id, refer
     }
     
     try:
-        api_url = f"http://127.0.0.1:9798/api/messages/process" 
+        api_url = f"http://0.0.0.0:9798/api/messages/process" 
         requests.post(api_url, json=payload, timeout=10)
         logger.info(f"Email processed: {sender_email} | Thread Key: {thread_key}")
     except Exception as req_err:

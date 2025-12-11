@@ -5,7 +5,7 @@ from app.adapters.utils import split_text_smartly, make_meta_request
 
 class WhatsAppAdapter(BaseAdapter):
     def __init__(self):
-        self.version = "v18.0"
+        self.version = "v24.0"
         self.base_url = f"https://graph.facebook.com/{self.version}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
         self.token = settings.WHATSAPP_ACCESS_TOKEN
 
