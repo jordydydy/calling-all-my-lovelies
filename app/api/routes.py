@@ -4,10 +4,13 @@ from app.schemas.models import IncomingMessage
 from app.api.dependencies import get_orchestrator
 from app.services.orchestrator import MessageOrchestrator
 from app.services.parsers import parse_whatsapp_payload, parse_instagram_payload
+from app.repositories.message import MessageRepository
 import logging
 
 logger = logging.getLogger("api.routes")
 router = APIRouter()
+
+_msg_repo = MessageRepository()
 
 @router.get("/whatsapp/webhook")
 def verify_whatsapp(
@@ -84,5 +87,13 @@ async def process_message_internal(
     bg_tasks: BackgroundTasks,
     orchestrator: MessageOrchestrator = Depends(get_orchestrator)
 ):
+    if msg.platform == "email" and msg.metadata:
+        unique_id = msg.metadata.get("graph_message_id") or msg.metadata.get("message_id")
+        
+        if unique_id:
+            if _msg_repo.is_processed(unique_id, "email"):
+                logger.info(f"Duplicate email blocked: {unique_id}")
+                return {"status": "duplicate", "message": "Already processed"}
+    
     bg_tasks.add_task(orchestrator.process_message, msg)
     return {"status": "queued"}

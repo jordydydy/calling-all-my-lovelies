@@ -5,7 +5,7 @@ import requests
 import logging
 import msal
 from email.header import decode_header
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional
 
 from app.core.config import settings
 from app.adapters.email.utils import sanitize_email_body
@@ -15,7 +15,6 @@ logger = logging.getLogger("email.listener")
 repo = MessageRepository()
 
 _token_cache: Dict[str, Any] = {}
-_processing_cache: Set[str] = set()
 
 def get_graph_token() -> Optional[str]:
     global _token_cache
@@ -58,7 +57,12 @@ def decode_str(header_val):
             text += str(content)
     return text
 
-def process_single_email(sender_email, sender_name, subject, body, msg_id, references, thread_key, graph_message_id=None):
+def process_single_email(sender_email, sender_name, subject, body, graph_message_id, conversation_id):
+    """
+    Process email using Azure Graph identifiers
+    - graph_message_id: unique per message (for deduplication)
+    - conversation_id: groups messages in same thread (for threading)
+    """
     if "mailer-daemon" in sender_email.lower() or "noreply" in sender_email.lower():
         return
 
@@ -68,29 +72,21 @@ def process_single_email(sender_email, sender_name, subject, body, msg_id, refer
         "platform": "email",
         "metadata": {
             "subject": subject,
-            "in_reply_to": msg_id, 
-            "references": references,
             "sender_name": sender_name,
-            "thread_key": thread_key,
-            "graph_message_id": graph_message_id 
+            "graph_message_id": graph_message_id,  # For deduplication
+            "conversation_id": conversation_id      # For threading
         }
     }
     
     try:
         api_url = "http://0.0.0.0:9798/api/messages/process" 
-        requests.post(api_url, json=payload, timeout=10)
-        logger.info(f"Email processed: {sender_email} | Thread Key: {thread_key}")
+        resp = requests.post(api_url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info(f"Email queued: {sender_email} | ConvID: {conversation_id}")
+        else:
+            logger.error(f"API returned {resp.status_code}: {resp.text}")
     except Exception as req_err:
         logger.error(f"Failed to push email to API: {req_err}")
-
-def _determine_thread_key(msg_id, references, in_reply_to, azure_conv_id=None):
-    if azure_conv_id:
-        return azure_conv_id
-    if references:
-        return references.split()[0].strip()
-    if in_reply_to:
-        return in_reply_to.strip()
-    return msg_id
 
 def _extract_graph_body(msg):
     body_content = msg.get("body", {}).get("content", "")
@@ -100,54 +96,47 @@ def _extract_graph_body(msg):
         return sanitize_email_body(None, body_content)
     return sanitize_email_body(body_content, None)
 
-def _extract_graph_headers(headers_list):
-    references = ""
-    in_reply_to = ""
-    for h in headers_list:
-        h_name = h.get("name", "").lower()
-        if h_name == "references":
-            references = h.get("value", "")
-        elif h_name == "in-reply-to":
-            in_reply_to = h.get("value", "")
-    return references, in_reply_to
-
 def _process_graph_message(user_id, msg, token):
+    """
+    Process Azure Graph API message
+    Uses graph_id for deduplication and conversationId for threading
+    """
     graph_id = msg.get("id")
-    msg_id = msg.get("internetMessageId", "").strip()
+    conversation_id = msg.get("conversationId")
     
-    if not msg_id:
-        _mark_graph_read(user_id, graph_id, token)
+    if not graph_id:
+        logger.warning("Message missing Graph ID, skipping")
         return
 
-    if msg_id in _processing_cache: return
-    
-    if repo.is_processed(msg_id, "email"):
+    # Check if already processed (DB only, no in-memory cache)
+    if repo.is_processed(graph_id, "email"):
         _mark_graph_read(user_id, graph_id, token)
+        logger.debug(f"Email already processed: {graph_id}")
         return
-    
-    _processing_cache.add(msg_id)
-    if len(_processing_cache) > 1000: _processing_cache.clear()
 
     clean_body = _extract_graph_body(msg)
     if not clean_body: 
         _mark_graph_read(user_id, graph_id, token)
+        logger.debug(f"Empty body, marking as read: {graph_id}")
         return
 
-    references, in_reply_to = _extract_graph_headers(msg.get("internetMessageHeaders", []) or [])
-    thread_key = _determine_thread_key(msg_id, references, in_reply_to, msg.get("conversationId"))
-
     sender_info = msg.get("from", {}).get("emailAddress", {})
+    sender_email = sender_info.get("address", "")
+    
+    if not sender_email:
+        _mark_graph_read(user_id, graph_id, token)
+        logger.warning(f"No sender email found: {graph_id}")
+        return
     
     process_single_email(
-        sender_info.get("address", ""),
+        sender_email,
         sender_info.get("name", ""),
-        msg.get("subject", ""),
+        msg.get("subject", "No Subject"),
         clean_body,
-        msg_id,
-        references,
-        thread_key,
-        graph_id
+        graph_id,
+        conversation_id
     )
+    
     _mark_graph_read(user_id, graph_id, token)
 
 def _poll_graph_api():
@@ -159,7 +148,7 @@ def _poll_graph_api():
     params = {
         "$filter": "isRead eq false",
         "$top": 10,
-        "$select": "id,subject,from,body,internetMessageId,conversationId,isRead,internetMessageHeaders"
+        "$select": "id,subject,from,body,conversationId,isRead"
     }
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -183,6 +172,7 @@ def _poll_graph_api():
         logger.error(f"Graph Polling Exception: {e}")
 
 def _mark_graph_read(user_id, message_id, token):
+    """Mark message as read in Office365"""
     url = f"https://graph.microsoft.com/v1.0/users/{user_id}/messages/{message_id}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -190,9 +180,10 @@ def _mark_graph_read(user_id, message_id, token):
     }
     try:
         requests.patch(url, json={"isRead": True}, headers=headers, timeout=5)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to mark as read: {e}")
 
+# IMAP Functions (kept for Gmail support)
 def _fetch_and_parse_imap(mail, e_id):
     fetch_res = mail.fetch(e_id, '(RFC822)')
     if not fetch_res or len(fetch_res) != 2:
@@ -245,21 +236,33 @@ def _process_imap_message(mail, e_id):
         sender_email, sender_name = _extract_imap_sender(msg)
         references = msg.get("References", "")
         in_reply_to = msg.get("In-Reply-To", "")
-        thread_key = _determine_thread_key(msg_id, references, in_reply_to)
+        
+        # For IMAP, use Message-ID as thread key
+        thread_key = references.split()[0].strip() if references else (in_reply_to.strip() if in_reply_to else msg_id)
 
-        process_single_email(
-            sender_email, 
-            sender_name, 
-            decode_str(msg.get("Subject")), 
-            clean_body, 
-            msg_id, 
-            references, 
-            thread_key, 
-            None
-        )
+        payload = {
+            "platform_unique_id": sender_email,
+            "query": clean_body,
+            "platform": "email",
+            "metadata": {
+                "subject": decode_str(msg.get("Subject")),
+                "sender_name": sender_name,
+                "message_id": msg_id,
+                "thread_key": thread_key,
+                "in_reply_to": in_reply_to,
+                "references": references
+            }
+        }
+        
+        try:
+            api_url = "http://0.0.0.0:9798/api/messages/process"
+            requests.post(api_url, json=payload, timeout=10)
+            logger.info(f"IMAP Email queued: {sender_email}")
+        except Exception as req_err:
+            logger.error(f"Failed to push IMAP email: {req_err}")
     
     except Exception as e_inner:
-        logger.error(f"Error processing individual email {e_id}: {e_inner}")
+        logger.error(f"Error processing IMAP email {e_id}: {e_inner}")
 
 def _poll_imap():
     try:
