@@ -58,11 +58,6 @@ def decode_str(header_val):
     return text
 
 def process_single_email(sender_email, sender_name, subject, body, graph_message_id, conversation_id):
-    """
-    Process email using Azure Graph identifiers
-    - graph_message_id: unique per message (for deduplication)
-    - conversation_id: groups messages in same thread (for threading)
-    """
     if "mailer-daemon" in sender_email.lower() or "noreply" in sender_email.lower():
         return
 
@@ -73,8 +68,8 @@ def process_single_email(sender_email, sender_name, subject, body, graph_message
         "metadata": {
             "subject": subject,
             "sender_name": sender_name,
-            "graph_message_id": graph_message_id,  # For deduplication
-            "conversation_id": conversation_id      # For threading
+            "graph_message_id": graph_message_id, 
+            "conversation_id": conversation_id      
         }
     }
     
@@ -97,10 +92,6 @@ def _extract_graph_body(msg):
     return sanitize_email_body(body_content, None)
 
 def _process_graph_message(user_id, msg, token):
-    """
-    Process Azure Graph API message
-    Uses graph_id for deduplication and conversationId for threading
-    """
     graph_id = msg.get("id")
     conversation_id = msg.get("conversationId")
     
@@ -108,7 +99,6 @@ def _process_graph_message(user_id, msg, token):
         logger.warning("Message missing Graph ID, skipping")
         return
 
-    # Check if already processed (DB only, no in-memory cache)
     if repo.is_processed(graph_id, "email"):
         _mark_graph_read(user_id, graph_id, token)
         logger.debug(f"Email already processed: {graph_id}")
@@ -172,7 +162,6 @@ def _poll_graph_api():
         logger.error(f"Graph Polling Exception: {e}")
 
 def _mark_graph_read(user_id, message_id, token):
-    """Mark message as read in Office365"""
     url = f"https://graph.microsoft.com/v1.0/users/{user_id}/messages/{message_id}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -183,7 +172,6 @@ def _mark_graph_read(user_id, message_id, token):
     except Exception as e:
         logger.debug(f"Failed to mark as read: {e}")
 
-# IMAP Functions (kept for Gmail support)
 def _fetch_and_parse_imap(mail, e_id):
     fetch_res = mail.fetch(e_id, '(RFC822)')
     if not fetch_res or len(fetch_res) != 2:
@@ -237,7 +225,6 @@ def _process_imap_message(mail, e_id):
         references = msg.get("References", "")
         in_reply_to = msg.get("In-Reply-To", "")
         
-        # For IMAP, use Message-ID as thread key
         thread_key = references.split()[0].strip() if references else (in_reply_to.strip() if in_reply_to else msg_id)
 
         payload = {
