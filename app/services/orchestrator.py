@@ -86,7 +86,7 @@ class MessageOrchestrator:
             if settings.EMAIL_PROVIDER == "azure_oauth2":
                 return {
                     "subject": meta.get("subject"),
-                    "graph_message_id": meta.get("graph_message_id")  # Reply to this message
+                    "graph_message_id": meta.get("graph_message_id")  
                 }
             return {
                 "subject": meta.get("subject"),
@@ -160,16 +160,38 @@ class MessageOrchestrator:
 
     async def process_message(self, msg: IncomingMessage):
         adapter = self.adapters.get(msg.platform)
-        if not adapter: return
+        if not adapter: 
+            return
 
-        self._ensure_conversation_id(msg)
+        try:
+            msg_id = msg.metadata.get("message_id") if msg.metadata else None
+            
+            await adapter.send_typing_on(msg.platform_unique_id, message_id=msg_id)
+            
+            if msg.platform == "whatsapp" and msg_id:
+                if hasattr(adapter, 'mark_as_read'):
+                    await adapter.mark_as_read(msg_id)
+        except Exception as e:
+            logger.warning(f"Failed to set status indicators for {msg.platform}: {e}")
+
+        if not msg.conversation_id:
+            self._ensure_conversation_id(msg)
+
         self._save_email_metadata(msg)
 
-        success = await self.chatbot.ask(msg.query, msg.conversation_id, msg.platform, msg.platform_unique_id)
+        success = await self.chatbot.ask(
+            msg.query, 
+            msg.conversation_id, 
+            msg.platform, 
+            msg.platform_unique_id
+        )
         
         if not success:
-            try: await adapter.send_typing_off(msg.platform_unique_id)
-            except Exception: pass
+            logger.error(f"Gagal push ke backend AI for conversation {msg.conversation_id}")
+            try: 
+                await adapter.send_typing_off(msg.platform_unique_id)
+            except Exception: 
+                pass
 
     def _save_email_metadata(self, msg: IncomingMessage):
         if msg.platform != "email" or not msg.conversation_id or not msg.metadata:
