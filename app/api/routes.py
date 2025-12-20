@@ -90,10 +90,9 @@ async def process_message_internal(
     if msg.platform == "email" and msg.metadata:
         unique_id = msg.metadata.get("graph_message_id") or msg.metadata.get("message_id")
         
-        if unique_id:
-            if _msg_repo.is_processed(unique_id, "email"):
-                logger.info(f"Duplicate email blocked: {unique_id}")
-                return {"status": "duplicate", "message": "Already processed"}
+        if unique_id and _msg_repo.is_processed(unique_id, "email"):
+            logger.info(f"Duplicate email blocked: {unique_id}")
+            return {"status": "duplicate", "message": "Already processed"}
     
     bg_tasks.add_task(orchestrator.process_message, msg)
     return {"status": "queued"}

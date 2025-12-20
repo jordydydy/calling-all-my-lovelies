@@ -57,7 +57,7 @@ def decode_str(header_val):
             text += str(content)
     return text
 
-def process_single_email(sender_email, sender_name, subject, body, metadata: dict):
+def process_single_email(sender_email, body, metadata: dict):
     if "mailer-daemon" in sender_email.lower() or "noreply" in sender_email.lower():
         return
 
@@ -106,7 +106,7 @@ def _process_graph_message(user_id, msg, token):
         "conversation_id": azure_conv_id
     }
 
-    process_single_email(sender_info.get("address", ""), sender_info.get("name", ""), metadata["subject"], clean_body, metadata)
+    process_single_email(sender_info.get("address", ""), clean_body, metadata)
     _mark_graph_read(user_id, graph_id, token)
 
 def _poll_graph_api():
@@ -129,6 +129,39 @@ def _mark_graph_read(user_id, message_id, token):
         requests.patch(url, json={"isRead": True}, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, timeout=5)
     except Exception: pass
 
+def _determine_thread_key(references: str, in_reply_to: str, msg_id: str) -> str:
+    if references:
+        return references.split()[0].strip()
+    if in_reply_to:
+        return in_reply_to.strip()
+    return msg_id
+
+def _extract_email_parts(msg) -> tuple:
+    text_plain = ""
+    html = ""
+    
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            if content_type == "text/plain":
+                text_plain = part.get_payload(decode=True).decode(errors='ignore')
+            elif content_type == "text/html":
+                html = part.get_payload(decode=True).decode(errors='ignore')
+    else:
+        text_plain = msg.get_payload(decode=True).decode(errors='ignore')
+    
+    return text_plain, html
+
+def _extract_sender_info(sender: str) -> tuple:
+    if '<' in sender:
+        email_addr = sender.split('<')[-1].replace('>', '').strip()
+        sender_name = sender.split('<')[0].strip()
+    else:
+        email_addr = sender
+        sender_name = sender
+    
+    return email_addr, sender_name
+
 def _process_imap_message(mail, e_id):
     try:
         _, msg_data = mail.fetch(e_id, '(RFC822)')
@@ -138,34 +171,28 @@ def _process_imap_message(mail, e_id):
         if not msg_id or repo.is_processed(msg_id, "email"):
             return
         
-        text_plain, html = "", ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain": text_plain = part.get_payload(decode=True).decode(errors='ignore')
-                elif part.get_content_type() == "text/html": html = part.get_payload(decode=True).decode(errors='ignore')
-        else:
-            text_plain = msg.get_payload(decode=True).decode(errors='ignore')
-            
+        text_plain, html = _extract_email_parts(msg)
         clean_body = sanitize_email_body(text_plain, html)
-        if not clean_body: return
+        if not clean_body:
+            return
 
         sender = decode_str(msg.get("From"))
-        email_addr = sender.split('<')[-1].replace('>', '').strip() if '<' in sender else sender
+        email_addr, sender_name = _extract_sender_info(sender)
         
         references = msg.get("References", "")
         in_reply_to = msg.get("In-Reply-To", "")
-        thread_key = references.split()[0].strip() if references else (in_reply_to.strip() if in_reply_to else msg_id)
+        thread_key = _determine_thread_key(references, in_reply_to, msg_id)
 
         metadata = {
             "subject": decode_str(msg.get("Subject")),
-            "sender_name": sender.split('<')[0].strip() if '<' in sender else sender,
+            "sender_name": sender_name,
             "message_id": msg_id,
             "thread_key": thread_key,
             "in_reply_to": in_reply_to,
             "references": references
         }
         
-        process_single_email(email_addr, metadata["sender_name"], metadata["subject"], clean_body, metadata)
+        process_single_email(email_addr, clean_body, metadata)
     except Exception as e:
         logger.error(f"IMAP Error: {e}")
 

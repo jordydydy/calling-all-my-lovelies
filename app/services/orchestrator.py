@@ -68,9 +68,10 @@ class MessageOrchestrator:
             "feedback": is_good,
             "answer_id": int(answer_id_raw) if answer_id_raw.isdigit() else 0
         }
-        url = settings.FEEDBACK_API_URL
+        url = settings.BACKEND_FEEDBACK_URL
         headers = {"Content-Type": "application/json"}
-        if settings.CORE_API_KEY: headers["X-API-Key"] = settings.CORE_API_KEY
+        if settings.BACKEND_API_KEY: 
+            headers["X-API-Key"] = settings.BACKEND_API_KEY
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(url, json=backend_payload, headers=headers)

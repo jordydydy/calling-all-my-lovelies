@@ -20,23 +20,23 @@ class ChatbotClient:
         }
         
         headers = {"Content-Type": "application/json"}
-        if settings.CHATBOT_API_KEY:
-            headers["X-API-Key"] = settings.CHATBOT_API_KEY
+        if settings.BACKEND_API_KEY:
+            headers["X-API-Key"] = settings.BACKEND_API_KEY
 
-        url = settings.CHATBOT_URL
+        url = settings.BACKEND_ASK_URL
         
         logger.info(f"PUSH TO BACKEND: {url} | ConvID: {safe_conv_id}")
         
         try:
-            async with httpx.AsyncClient(timeout=settings.CHATBOT_TIMEOUT_SECONDS) as client:
+            async with httpx.AsyncClient(timeout=settings.BACKEND_API_TIMEOUT_SECONDS) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 
             if resp.status_code == 200:
                 return True
             else:
-                logger.warning(f"Chatbot API Error {resp.status_code}: {resp.text}")
+                logger.warning(f"Backend API Error {resp.status_code}: {resp.text}")
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to push to Chatbot API: {e}")
+            logger.error(f"Failed to push to Backend API: {e}")
             return False

@@ -8,9 +8,13 @@ class BaseAdapter(ABC):
         pass
 
     async def send_typing_on(self, recipient_id: str, message_id: Optional[str] = None):
+        # Base implementation for turning off typing indicators.
+        # Left empty as not all platforms support or require an explicit 'off' signal.
         pass
 
     async def send_typing_off(self, recipient_id: str):
+        # Base implementation for turning off typing indicators.
+        # Left empty as not all platforms support or require an explicit 'off' signal.
         pass
     
     async def send_feedback_request(self, recipient_id: str, answer_id: int) -> Dict[str, Any]:

@@ -10,13 +10,10 @@ class Settings(BaseSettings):
     
     ENABLE_BACKGROUND_WORKER: bool = True 
 
-    # Chatbot / Backend
-    CHATBOT_URL: Optional[str] = None
-    CHATBOT_API_KEY: Optional[str] = None
-    CHATBOT_TIMEOUT_SECONDS: int = 30
-    
-    CORE_API_BASE_URL: str
-    CORE_API_KEY: Optional[str] = None
+    # Backend API Configuration
+    BACKEND_API_BASE_URL: str
+    BACKEND_API_KEY: Optional[str] = None
+    BACKEND_API_TIMEOUT_SECONDS: int = 30
     
     # Feature Flags
     AUTO_REPLY_TO_PLATFORM: bool = False
@@ -58,8 +55,13 @@ class Settings(BaseSettings):
     AZURE_EMAIL_USER: Optional[str] = None
 
     @property
-    def FEEDBACK_API_URL(self) -> str:
-        base = self.CORE_API_BASE_URL.rstrip("/")
+    def BACKEND_ASK_URL(self) -> str:
+        base = self.BACKEND_API_BASE_URL.rstrip("/")
+        return f"{base}/api/chat/multichannel/ask"
+    
+    @property
+    def BACKEND_FEEDBACK_URL(self) -> str:
+        base = self.BACKEND_API_BASE_URL.rstrip("/")
         return f"{base}/api/chat/multichannel/feedback"
     
     @property
