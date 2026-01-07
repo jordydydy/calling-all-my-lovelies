@@ -13,7 +13,7 @@ async def run_scheduler():
     while True:
         try:
             orchestrator = get_orchestrator()
-            stale_sessions = repo_conv.get_stale_sessions(minutes=15)
+            stale_sessions = repo_conv.get_stale_sessions(minutes=5)
     
             if stale_sessions:
                 logger.info(f"🔍 Found {len(stale_sessions)} stale sessions.")
