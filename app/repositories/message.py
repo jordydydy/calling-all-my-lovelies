@@ -1,5 +1,5 @@
 from typing import Optional, Dict
-from psycopg import errors # Pastikan library psycopg sudah terinstall
+from psycopg import errors
 from app.repositories.base import Database
 from app.core.exceptions import DatabaseError
 import logging

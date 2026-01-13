@@ -9,3 +9,4 @@ google-genai
 msal
 psycopg[binary]
 psycopg-pool
+redis

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ENABLE_BACKGROUND_WORKER: bool = True 
     X_API_KEY: Optional[str] = None 
-    BACKEND_CONCURRENCY_LIMIT: int
+    BACKEND_CONCURRENCY_LIMIT: int = 5 
 
     # Backend API Configuration
     BACKEND_API_BASE_URL: str
@@ -19,12 +19,20 @@ class Settings(BaseSettings):
     EMAIL_POLL_INTERVAL_SECONDS: int = 15
     MAX_INPUT_CHARS: int = 6000
 
+    # Redis Configuration
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_DB: int
+    REDIS_QUEUE_KEY: str
+    
+    MAX_PENDING_REQUESTS: int
+
     # Database
     DB_HOST: str
     DB_PORT: int
     DB_NAME: str
     DB_USER: str
-    DB_PASS: str
+    DB_PASS: Optional[str] = None
 
     # Social Media Credentials
     INSTAGRAM_PAGE_ACCESS_TOKEN: Optional[str] = None
